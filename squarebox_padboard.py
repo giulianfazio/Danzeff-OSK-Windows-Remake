@@ -38,10 +38,121 @@ import gamepad_high_cpu_usage_patch
 import squarebox_gamepad_config as app_config
 import system_window_util as window_util
 
+from inspect import getmembers
+
 
 default_letters = app_config.tiles[0].foreground_grill
 caps_letters = app_config.tiles[0].background_grill
 
+class inputAction():
+    def __init__(self, keycode):
+        self.keycode = None
+        self.timestamp = None
+        
+    def is_recent(self, time_threshold = 1, with_respect_time = time.time()):
+        return self.timestamp < (with_respect_time - time_threshold)
+
+    def is_button():
+        return False
+
+    def is_axis():
+        return False
+
+class inputActionButton(inputAction):
+    def __init__(self):
+        super(inputAction)
+        self.is_pressed = False
+
+    def was_just_pressed(self, time_threshold = 1):
+        return self.is_pressed and is_recent(time_threshold)
+
+    def was_just_released(self, time_threshold = 1):
+        return not self.is_pressed and is_recent(time_threshold)
+
+    def is_button():
+        return True
+
+class inputActionAxis(inputAction):
+    def __init__(self):
+        super(inputAction)
+        self.axis_value = 0
+
+    def is_axis():
+        return True
+
+class inputEventToActionConverter():
+    def convert_eventcode_to_joypad_notation(event_code):
+        return event_code
+        '''
+        if event_code == 'ABS_X':
+            return "Joystick.LeftStick.X"
+        elif event_code == 'ABS_Y':
+            return "Joystick.LeftStick.Y"
+        elif event_code == 'ABS_RX':
+            return "Joystick.RightStick.X"
+        elif event_code == 'ABS_RY':
+            return "Joystick.RightStick.Y"
+        elif event_code == 'ABS_Z':
+            return "Joystick.LeftTrigger"
+        elif event_code == 'ABS_RZ':
+            return "Joystick.RightTrigger"
+        elif event_code == 'BTN_TL':
+            return "Joystick.LeftBumper"
+        elif event_code == 'BTN_TR':
+            return "Joystick.RightBumper"
+        elif event_code == 'BTN_SOUTH':
+            self.A = event.state
+        elif event_code == 'BTN_NORTH':
+            self.X = event.state
+        elif event_code == 'BTN_WEST':
+            self.Y = event.state
+        elif event_code == 'BTN_EAST':
+            self.B = event.state
+        elif event_code == 'BTN_THUMBL':
+            self.LeftThumb = event.state
+        elif event_code == 'BTN_THUMBR':
+            self.RightThumb = event.state
+        elif event_code == 'BTN_SELECT':
+            self.Back = event.state
+        elif event_code == 'BTN_START':
+            self.Start = event.state
+        elif event_code == 'BTN_TRIGGER_HAPPY1':
+            self.LeftDPad = event.state
+        elif event_code == 'BTN_TRIGGER_HAPPY2':
+            self.RightDPad = event.state
+        elif event_code == 'BTN_TRIGGER_HAPPY3':
+            self.UpDPad = event.state
+        elif event_code == 'BTN_TRIGGER_HAPPY4':
+            self.DownDPad = event.state
+        '''
+
+    def build_action_button(action_object, event):
+        action_object.keycode = convert_eventcode_to_joypad_notation(event.code)
+        action_object.timestamp = event.timestamp
+        action_object.is_pressed = event.code != 0
+
+    def build_action_axis(action_object, event):
+        action_object.keycode = convert_eventcode_to_joypad_notation(event.code)
+        action_object.timestamp = event.timestamp
+        action_object.axis_value = event.state
+
+    event_type_to_action_class = {'KEY':inputActionButton, 'ABSOLUTE':inputActionAxis}
+    event_type_to_action_build = {'KEY':build_action_button, 'ABSOLUTE':build_action_axis}
+
+    def input_event_to_action(event):
+        action_class = event_type_to_action_class[event.ev_type]
+        action_build = event_type_to_action_build[event.ev_type]
+        action_object = action_class()
+        action_build(action_object, event)
+        return action_object
+
+class inputComponent():
+    def __init__(self):
+        key_states_map = {}
+
+    def push_action_event(self, action_event):
+        self.keykey_states_map[action_event.keycode] = action_event
+        self.last_timestamp = time.time()
 
 class myApp(App):
     is_in_pause = False
@@ -68,9 +179,17 @@ class myApp(App):
         is_L2_pressed = False
         is_R2_pressed = False
 
+        input_component = inputComponent()
+
+        pending_actions = []
+
         while True:
             events = get_gamepad()
             for event in events:
+
+                action_event = inputEventToActionConverter.input_event_to_action(event)
+                input_component.push_action_event(action_event)
+
                 if event.code == 'ABS_Z':
                     is_L2_pressed = event.state > TRIGGER_THRESHOLD
                 elif event.code == 'ABS_RZ':
@@ -160,6 +279,17 @@ class myApp(App):
                         self.xVel = int(velocity_constant * value)
                     else:
                         self.xVel = 0
+
+            for action_code, action_event in input_component.key_states_map:
+                if action_event.is_button() and action_event.was_just_pressed():
+                    pending_actions.push(action_event)
+
+            now_time = time.time()
+            dif_time = input_component.last_timestamp - now_time
+            if dif_time > 1 or dif_time < 0.2:
+                for act in pending_actions:
+                    keyboard.write(act.keycode)
+
 
 
     def init_input_listening_thread(self):
